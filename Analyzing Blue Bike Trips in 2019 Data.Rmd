@@ -1,0 +1,722 @@
+---
+title: "Analysis of Boston Blue Bikes Data in 2019"
+author: "Ismah Ahmed"
+date: "February 28, 2024"
+output: 
+  html_document:
+    code_folding: hide
+    theme: cosmo
+    toc: yes
+    toc_float:
+      collapsed: false
+    df_print: paged
+---
+# Introduction
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# LOADING LIBRIES NEEDED
+library(readr)
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(plotly)
+library(sampling)
+library(leaflet)
+
+# LOADING CSV FILE/DATA 
+# MAKE SURE TO SET WORKING DIRECTORY TO LOCAL FOLDER CONTAINING THE CSV FILE
+bluebikes_original<-  read_csv("bluebikes_tripdata_2019.csv")
+
+station_data <- read_csv("current_bluebikes_stations.csv")
+```
+
+## Data Origin and Overview
+
+**Blue Bikes**, formerly known as Hubway, is a public bike-sharing system across the metropolitan areas of Boston. Participating individuals can either be Blue Bike members (including annual or monthly members) or casual single-trip day pass users. Blue Bikes publishes downloadable files of trip user data each quarter, and for this analysis, I will be using the compiled 2019 dataset from [Kaggle](https://www.kaggle.com/datasets/jackdaoud/bluebikes-in-boston) in addition to the [station dataset](https://bluebikes.com/system-data) published by Blue Bikes.
+
+The data set from Kaggle was originally retrieved from [Blue Bikes](https://bluebikes.com/system-data) and then compiled and collected for the year 2019. Blue Bikes also publishes downloadable files of station data, I will be joining the 2019 trip data from Kaggle with the station data to analyze municipality data. Both datasets used in this analysis was downloaded as CSV files and read as a dataframe in R. 
+
+
+## Goal of Analysis
+
+By leveraging this comprehensive data set, I aim to uncover insightful patterns associated with bike rental usage in Boston.
+For this analysis, I am interested in taking a deeper look at short trips (trip duration of 2 hours or less). It's noteworthy that the overwhelming majority of data in the Blue Bikes dataset for 2019 comprises trips lasting under 2 hours. Trips exceeding this threshold accounted for less than 1% of the data, specifically 0.649%.
+
+This investigation will encompass various areas, including the examination of trip duration across different districts, the identification of key districts driving Blue Bike rental demand, and the assessment of the distribution of total trip volume throughout the year. Additionally, I have conducted an analysis of applying statistical principles such as the central limit theorem to gain a deeper understanding of the distribution of trip duration. I will also explore various sampling methods to determine which provides the most accurate representation of our population data.
+
+In the 'Analysis' section of this document, you will encounter a variety of plots, visualizations, and analyses focusing on different aspects of the Blue Bikes dataset. Within this section, I delve into the intricacies of the dataset and uncover underlying patterns.
+
+## Data Prep
+
+The user trip dataset includes 17 columns and over 2 million rows while the Blue Bikes station dataset includes 5 columns and 421 rows. For this analysis, I am interested in understanding patterns for those individuals who rented a bike for short trips, specifically 2 hours or less. To ensure the integrity of our analysis, I will be excluding instances of longer rental durations from the dataset.
+
+**New columns I will be adding:**
+
+- `tripduration_minutes` :  The dataset currently only has a trip duration column in seconds, I will be creating a new column to get the duration in minutes
+- `day` : The data only has month and year column. I will be creating a day column
+- `date` : This will be the date of started trip without a time stamp
+
+In order to provide a concise analysis of some of these attributes, cleaning up the data is necessary. This includes changing data types and removing unneeded rows (trips over 2 hours). I will also be adding a new column `tripduration_minutes` which uses the `tripduration` column (shown in seconds) to convert trip duration to minutes. Finally, I will be joining the 2019 trip data set with the station dataset using the station name variable from both tables. After the tables are joined, I will delete duplicate columns.
+
+I used the following R libraries/packages to conduct this analysis: `readr`, `knitr`, `kableExtra`, `tidyverse`, `plotly`, `sampling` and `leaflet`
+
+
+*Note: Some values may produce an NA value when joining. This may be because the station data is more recently updated than the trip data set (from 2019). When analyzing this data in our analysis, later on, we will omit NA.*
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# removing rows where trip duration is over 2 hours
+bluebikes <- subset(bluebikes_original, tripduration < 7200)
+
+# creating day column and date column
+bluebikes$day <- day(bluebikes$starttime)
+bluebikes$date <- format(bluebikes$starttime, "%Y-%m-%d")
+bluebikes$date <- as.Date(bluebikes$date)
+
+# creating column of trip duration in minutes
+bluebikes <- bluebikes %>%
+  mutate(tripduration_minutes = ceiling(tripduration / 60))
+
+# joining trip data with station data
+bluebikes <- left_join(bluebikes, station_data, by = c("start station name" = "Name"))
+bluebikes <- bluebikes %>% rename(start_district = District, start_total_docks = `Total docks`)
+bluebikes <- left_join(bluebikes, station_data, by = c("end station name" = "Name"))
+bluebikes <- bluebikes %>% rename(end_district = District, end_total_docks = `Total docks`)
+
+# removing duplicate columns and columns not needed
+bluebikes <- bluebikes %>% select(-Latitude.x, -Longitude.x, -Public.x, -Number.x, -Latitude.y, -Longitude.y, -Public.y, -Number.y)
+```
+
+
+***
+<details>
+  <summary>**Click here to learn more about the attributes in the data we will be analyzing**</summary>
+  
+  *Source: Information on the attributes found on [Blue Bikes](https://bluebikes.com/system-data) and [Kaggle](https://www.kaggle.com/datasets/jackdaoud/bluebikes-in-boston)*
+  
+ - `tripduration` : duration of a bike trip in seconds
+ - `tripduration_minutes` : column added for analysis. duration of bike trip in minutes
+ - `starttime`: timestamp of start time of trip
+ - `stoptime` : timestamp of end time of trip
+ - `start station id` : unique stationID where trip started
+ - `start station name` : name of the station at start of trip
+ - `start station latitude` : latitude of start station
+ - `start station longitude` : longitude of start station
+ - `end station id` : unique stationID where trip ended
+ - `end station name` : name of station at end of trip
+ - `end station loatitude` : latitude of end station
+ - `end station longitude` : longitude of end station
+ - `bikeid` : unique ID of bike used for the trip
+ - `usertype` : Customer (casual single trip or day pass user) or Subscriber (annual or monthly member)
+ - `year` : year when trip took place, for our data, this will all be 2019
+ - `month` : month when trip took place (numerical 1-12)
+ - `day` : created column, day of month trip took place
+ - `date` : created column, date of trip in YYYY-MM-DD format
+ - `birth year` : birth year of user, this is self reported
+ - `gender` : gender of user, this is self reported
+ - `start_district` : district at start of trip. Boston, Brookline Cambridge, Everett, Somerville or NA
+ - `start_total_docks` : total number of docs at start of trip 
+ - `end_district` : district at end of trip. Boston, Brookline Cambridge, Everett, Somerville or NA
+ - `end_total_docks` : total number of docs at end of trip 
+ 
+</details>
+
+***
+
+Below, you will find the top 100 rows in the dataset we will be using to analyze Blue Bike trips across the Boston Metropolitan areas
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+top_100_bluebikes <- head(bluebikes, 100)
+top_100_bluebikes
+```
+
+
+# Analysis
+
+
+## Bike Rentals in 2019 {.tabset}
+
+The distribution of Bike Rentals throughout the year is not at all surprising. We can see that September is the most popular month for Blue Bike rentals and January is recorded as the lowest. This trend suggests a general preference for biking during warmer months and a decrease during colder ones, which is understandable given Boston's chilly winters.
+
+### Daily Rentals Throughout 2019
+
+The scatter plot below illustrates daily Blue Bike rental counts, with each point representing the number of rentals for that day. The trend shows a positive incline towards the warmer months and a negative trend towards the colder months.
+
+```{r, message = FALSE, warning = FALSE}
+daily_count <- bluebikes %>%
+  group_by(date) %>%
+  summarize(count = n())
+
+daily_count_scatter <- plot_ly(x = daily_count$date, y = daily_count$count, type = "scatter", mode = "markers") %>%
+  layout(title = "Daily Counts of Bike Bike Rentals in 2019",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Bike Rentals"),
+         font = list(family = "Proxima Nova, sans-serif", size = 16, color = "black"),
+         margin = list(t = 50, b = 50))
+  
+
+daily_count_scatter
+```
+
+### Monthly Average
+
+Below you will find the distribution of daily Blue Bike rental averages by month. Each bar represents a specific month in the year 2019. The height of each bar represents the average daily bike rental for that month. The shape of this distribution follows a similar pattern to the scatter plot of daily rentals throughout 2019.
+
+```{r, message = FALSE, warning = FALSE}
+monthly_avg <- bluebikes %>%
+  group_by(month, day) %>%
+  summarize(daily_trips = n()) %>%
+  group_by(month) %>%
+  summarize(average = mean(daily_trips))
+
+monthly_avg_bar <- plot_ly(x = monthly_avg$month, y = monthly_avg$average, type = "bar") %>%
+  layout(
+    title = "Daily Blue Bike Rental Averages by Month",
+    xaxis = list(
+        tickmode = "array",
+        tickvals = 1:12,
+        ticktext = month.abb),
+    yaxis = list(title = "Bike Rental Average"),
+    font = list(family = "Proxima Nova, sans-serif", size = 16, color = "black"),
+         margin = list(t = 50, b = 50))
+  
+
+monthly_avg_bar
+```
+
+
+
+## Analysis of Metropolitan Areas {.tabset}
+
+In this section of our analysis, we will examine the district data provided by Blue Bikes, encompassing five districts: Boston, Cambridge, Everett, Brookline, and Somerville. We will exclude any NA values from our analysis.
+
+The first tab will showcase the distribution of bike rentals throughout the year for each district. In the second tab, we will explore the total number of bike rentals or trips in each district for the year 2019. The third tab will focus on the distribution of trip duration in minutes for each district throughout the year. Lastly, in the fourth tab, we will delve into the distribution of trip duration in minutes specifically for Everett, MA.
+
+### Time Series
+
+The time series of total daily bike rides throughout the year by district is shown below. In Blue, we predictably find Boston to generally have the highest number of bike rides throughout the year in comparison with the other districts. If you take a look at the interactive plot, you will find that the shape of the distributions are consistent in all the districts (with the exception of Everett, MA which is introduced in Spring 2019). 
+
+I use the following attributes to create this line chart below: `start_district`, `date` and daily trip count.
+
+```{r, message = FALSE, warning = FALSE}
+district_trips_rides<- bluebikes %>%
+  filter(!is.na(start_district)) %>% 
+  group_by(date, start_district) %>%
+  summarize(daily_trips = n()) %>%
+    group_by(start_district)
+
+district_trips_rides <- district_trips_rides %>%
+  pivot_wider(names_from = start_district, values_from = daily_trips)
+
+district_trips_rides <- district_trips_rides %>%
+  arrange(date)
+
+fig_district_trips <- plot_ly(data = district_trips_rides, x = ~date) %>%
+  add_trace(y = ~Boston, name = "Boston", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Cambridge, name = "Cambridge", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Somerville, name = "Somerville", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Brookline, name = "Brookline", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Everett, name = "Everett", type = "scatter", mode = "lines")%>%
+  layout(xaxis = list(title = "Date"), 
+         yaxis = list(title = "Number of Trips"))  
+                              
+
+fig_district_trips
+```
+
+### Total Trips
+
+Let's look at the total number of trips for the year 2019 by each starting district (where the trip started). Below you will find a bar chart and pie chart of the distributions by starting district. Both charts show that the city of Boston makes up the greatest proportion of total trips, 55% of the data, while Cambridge is the runner-up. The district with the lowest proportion is Everett, making up about 0.219 % of the data which is 4,905 trips. This conclusion is consistent with our findings analalyzed in the time series.
+
+I use the following attributes to create the bar chart below: `start_district` and daily trip count
+
+```{r, message = FALSE, warning = FALSE}
+district_trips <- bluebikes %>%
+  filter(!is.na(start_district)) %>% 
+  group_by(start_district) %>%
+  summarize(daily_trips = n())
+
+fig_district_counts <- plot_ly(district_trips, x = ~start_district, y = ~daily_trips, type = 'bar',
+        marker = list(color = 'rgb(158,202,225)',
+                      line = list(color = 'rgb(8,48,107)',
+                                  width = 1.5)))
+        
+fig_district_counts <- fig_district_counts %>%
+  layout(title ="Total Number of Blue Bike Trips In Each District in 2019",
+         xaxis = list(title = "District At Start of Trip"),
+         yaxis = list(title = "Total Bike Rentals"))
+
+fig_district_counts
+```
+
+I use the following attributes to create this piechart: `start_district` and daily trip count
+
+```{r, message = FALSE, warning = FALSE}
+colors <- c('rgb(20,2,211)', 'rgb(128,133,133)', 'rgb(144,103,167)', 'rgb(171,104,87)', 'rgb(114,147,203)')
+fig_district_counts_pie <- plot_ly(district_trips, 
+                                   labels = ~start_district, values = ~daily_trips, 
+                                   type = 'pie', pull = c(0.05, 0.025, 0.05, 0.2, 0.1),
+                                   marker = list(colors = colors))
+fig_district_counts_pie <- fig_district_counts_pie %>% 
+                      layout(title = 'Proportions of Total Trips By Starting District',
+                      xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                      yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+fig_district_counts_pie
+```
+
+
+### Trip Duration
+
+Although the starting district of Everett had the lowest proportion of total trips in 2019, it has a significantly higher average trip duration (in minutes). This may be because where Everett is located. We can also see that the line for Everett starts in June, and after further research, I found that Blue Bikes was first introduced to Everett, MA in [Spring of 2019](https://bluebikes.com/about). This also explains the low proportion of trips taken in 2019
+
+In the line plot below, we find that the trip duration on average for Everett was consistently higher than the other districts.
+
+I am using the following attributes to create the visualization below: `start_district`, `month` and `tripduration_minutes`
+
+```{r, message = FALSE, warning = FALSE}
+district_trips_duration <- bluebikes %>%
+  filter(!is.na(start_district)) %>% 
+  group_by(month, start_district) %>%
+  summarize(avg_trip_duration = mean(tripduration_minutes)) %>%
+    group_by(start_district)
+
+district_trips_duration <- district_trips_duration %>%
+  pivot_wider(names_from = start_district, values_from = avg_trip_duration)
+
+district_trips_duration <- district_trips_duration %>%
+  arrange(month)
+
+fig_district_trips_duration <- plot_ly(data = district_trips_duration, x = ~month) %>%
+  add_trace(y = ~Boston, name = "Boston", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Cambridge, name = "Cambridge", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Somerville, name = "Somerville", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Brookline, name = "Brookline", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Everett, name = "Everett", type = "scatter", mode = "lines")%>%
+  layout(xaxis = list(title = "Date", tickmode = "array",
+        tickvals = 1:12,
+        ticktext = month.abb), 
+         yaxis = list(title = "Average Trip Duration"))  
+                              
+
+fig_district_trips_duration
+```
+
+
+Below, you will find a box plot of the distribution of trip duration across all districts. As you can see, they all are right skwed with a significant amount of outliers. Everett has a slightly higher median, at 18 minutes, in comparison with the other districts. 
+
+```{r, message = FALSE, warning = FALSE}
+district_trips_duration_boxplot <- bluebikes %>%
+  filter(!is.na(start_district)) 
+district_trips_duration_boxplot |>
+plot_ly(x = ~tripduration_minutes, color = ~start_district, type = "box")
+```
+
+### Everett District
+
+From what we found in the trip duration time series analysis, Everett appeared to have the highest on average trip duration in comparison with the other districts.
+
+Now, let's examine the spread of the numerical attribute, trip duration (in minutes), for Everett, MA. The distribution reveals a right skew, accompanied by several outliers. The median trip duration in Everett is approximately 18 minutes. This suggests that the averages shown in the line plot were likely influenced by outliers.
+
+***
+
+```{r, message = FALSE, warning = FALSE}
+everett_trips_duration <- bluebikes %>%
+  filter(start_district == "Everett")
+
+everett_trip_duration_boxplot <- plot_ly(x = everett_trips_duration$tripduration_minutes, type = "box", orientation = "h", name = "") %>% 
+  layout(xaxis = list(range = c(0, max(everett_trips_duration$tripduration_minutes) * 1.1)),  
+         title = "Everett Trip Duration Distribution") 
+
+
+everett_trip_duration_boxplot
+```
+
+
+## Other Analyses {.tabset}
+
+The Blue Bikes dataset offers a comprehensive array of attributes encompassing both metropolitan and user-specific data. While my primary analysis delves deeply into a select few attributes, I've incorporated some additional visualizations and insights across the user type and gender elements of the dataset. Below, you'll find the tabs, each dedicated to these two distinct areas of the dataset, offering glimpses into the data.
+
+### User Type
+
+One attribute of this dataset that I was interested in is `usertype`. This column has two categories: *Subscriber* and *Customer*. Subscribers are either annual or monthly members and Customers are casual single trio day pass users. Here I will take a glimpse of the distribution of different user types.
+
+**Findings:** Although subscribers make up the greater proportion of total users (79.2% of the data), it looks like Customers have a greater on average trip duration (in minutes). After looking into the [Blue Bikes pricing](https://bluebikes.com/pricing), it looks like Annual members include unlimited 45 minute rides at a time with an extra cost for additional time. Day pass users can get 24 hour access, 2 hour rides at a time, for a fixed amount. This may explain the increased time duration when compared to annual members. 
+
+
+```{r, message = FALSE, warning = FALSE}
+user_data_count <- bluebikes %>%
+  group_by(usertype) %>%
+  summarize(count = n()) 
+
+user_data_prop <- prop.table(table(bluebikes$usertype))*100
+user_data_prop <- as.data.frame(user_data_prop)
+names(user_data_prop) <- c("usertype", "Proportion")  
+
+combined_user_data <- merge(user_data_count, user_data_prop, by = "usertype")
+
+fig_user_pie <- combined_user_data %>% plot_ly(labels = ~usertype, values = ~count)
+fig_user_pie <- fig_user_pie %>% add_pie(hole = 0.6) 
+
+kable(combined_user_data, format = "markdown")
+fig_user_pie
+```
+
+Bellow you will find a table of average trip duration by month for each user type. The distribution is a timeseries of time duration throughout the year by user type.
+
+```{r, message = FALSE, warning = FALSE}
+user_data <- bluebikes %>%
+  group_by(month, usertype) %>%
+  summarize(avg_trip_duration = mean(tripduration_minutes)) %>%
+    group_by(usertype)
+
+user_data <- user_data %>%
+  pivot_wider(names_from = usertype, values_from = avg_trip_duration)
+
+user_data <- user_data %>%
+  arrange(month)
+
+fig_user_type <- plot_ly(data = user_data, x = ~month) %>%
+  add_trace(y = ~Customer, name = "Customer", type = "scatter", mode = "lines") %>%
+  add_trace(y = ~Subscriber, name = "Subscriber", type = "scatter", mode = "lines") %>%
+  layout(xaxis = list(title = "Date", tickmode = "array",
+        tickvals = 1:12,
+        ticktext = month.abb), 
+         yaxis = list(title = "Average Trip Duration (minutes)"))  
+                              
+kable(user_data, format = "markdown")
+fig_user_type
+```
+
+
+### Gender
+
+Taking a glimpse of the distribution of gender in the Blue Bikes dataset, we notice that men make a significant proportion of the population data. I would like to note that `gender` is self reported and I decided to omit the unknown genders. 
+
+```{r, message = FALSE, warning = FALSE}
+gender_data <- bluebikes %>%
+  filter(gender != 0) %>%
+  group_by(gender) %>%
+  mutate(gender = case_when(gender == 1 ~ "Male", gender == 2 ~ "Female")) %>%
+  summarize(count = n())
+
+colors <- c('rgb(20,2,211)', 'rgb(128,133,133)')
+gender_dist_pie <- plot_ly(gender_data, 
+                                   labels = ~gender, values = ~count, 
+                                   type = 'pie')
+
+gender_dist_pie
+```
+
+
+The distribution of genders across each district stay relatively consistent to what we found in the population.
+
+```{r, message = FALSE, warning = FALSE}
+gender_district_data <- bluebikes %>%
+  filter(gender != 0) %>%
+  filter(!is.na(start_district)) %>%
+  group_by(gender, start_district) %>%
+  mutate(gender = case_when(gender == 1 ~ "Male", gender == 2 ~ "Female")) %>%
+  summarize(count = n())
+
+gender_district_data <- gender_district_data %>%
+  pivot_wider(names_from = gender, values_from = count)
+
+gender_district_plot <- plot_ly(gender_district_data, x = ~start_district, y = ~Male, type = 'bar', name = 'Male')
+gender_district_plot <- gender_district_plot %>% add_trace(y = ~Female, name = 'Female')
+gender_district_plot <- gender_district_plot %>% layout(yaxis = list(title = 'Count'), barmode = 'stack')
+
+gender_district_plot
+```
+
+
+
+# Central Limit Theorem
+
+The *Central Limit Theorem (CLT)* is one of many important theorems in statistics. In the Central Limit Theorem, the distribution of $\bar{x}$, the mean of the samples of a given size, is referred to as the sampling distribution of the sample mean. CLT tells us that the sampling distribution of the sample means becomes more and more normal as the sample size, *n* increases, regardless of the shape of the original population distribution. 
+
+## Trip Duration in Minutes
+
+Before we delve into applying the Central Limit Theorem, lets take a closer look at the attribute we will be using: `tripduration_minutes`. This is a variable I created using the datasets columns `tripduration` which is the duration of a single bike trip in seconds. Since the dataset we are using only take a look at the trips under 2 hours, our max range is 120 minutes. Our minimum is 2 minutes. This means the distribution has a spread from 2 minutes long to 120 minutes long. Lets take a look at a summary of this data:
+
+```{r, message = FALSE, warning = FALSE, comment = ""}
+summary_tripdur <- summary(bluebikes$tripduration_minutes)
+summary_tripdur 
+```
+
+
+I have conducted an analysis of applying the Central Limit Theorem to gain a deeper understanding of the distribution of trip duration (in minutes). If we take a deeper look into Trip Duration for bike rides that were 2 hours or less, we can see an exponential distribution, specifically, a right skewed distribution. The mean trip duration (in minutes) is about 16.38 minutes and the standard deviation is about 14.65. The mean is represented by the dashed vertical line. We find that the proportion of bike rides under an hour long make up the majority of our data set.
+
+```{r, message = FALSE, warning = FALSE}
+hist(bluebikes$tripduration_minutes, prob = TRUE, col = "#1f77b4", border = "black",
+     main = "Trip Duration Histogram",
+     xlab = "Trip Duration (minutes)",
+     ylab = "Density",
+     ylim = c(0,0.07),xlim = c(0, max(bluebikes$tripduration_minutes)))
+
+
+mean_duration <- mean(bluebikes$tripduration_minutes)
+lines(density(bluebikes$tripduration_minutes), col = "red", lwd = 2)
+abline(v = mean_duration, col = "violet", lwd = 2, lty = 2)
+
+legend("topright", legend = c("Histogram", "Density Curve", "Mean"),
+       fill = c("#1f77b4", "red", "violet"),
+       title = "Key")
+```
+```{r, message = FALSE, echo = FALSE, comment = " ", results='hold'}
+mean_trip_duration <- mean(bluebikes$tripduration_minutes)
+sd_trip_duration <- sd(bluebikes$tripduration_minutes)
+
+cat("The average trip duration in minutes is:", mean_trip_duration, "\n")
+cat("The standard deviation of trip duration in minutes is:", sd_trip_duration, "\n")
+```
+
+
+From what we found in the density distribution of Trip Duration in Minutes, we know that the distribution is *exponential* and the Central Limit Theorem still holds true even if the data is not from a normal distribution. In this part of our analysis, we will be analyzing the distribution of 1000 random samples of sample sizes **5, 10, 20, and 40**.
+
+**Findings:** While our original Blue Bike data shows a right-skewed or exponential distribution, it's important to note that with larger sample sizes, the distribution tends to become more normal. Upon closer inspection, you'll observe that the standard deviation decreases and the distribution narrows as the sample size increases. The mean of the distributions remains around the mean of the data on trip duration in minutes. There is a vast contrast in distributions between a sample size of 5 vs a sample size of 40. 
+
+This observation regarding the effect of sample size on the distribution aligns with the Central Limit Theorem (CLT). In the context of this analysis, as sample size of trip durations is increased, the distribution of the sample means becomes more normal, with smaller standard deviation and narrower distribution.
+
+```{r, message = FALSE, warning = FALSE}
+set.seed(1000)
+
+par(mfrow = c(2,2))
+
+
+samples <- 1000
+xbar <- numeric(samples)
+
+for (size in c(5, 10, 20, 40)) {
+	for (i in 1:samples) {
+	  xbar[i] <- mean(sample(bluebikes$tripduration_minutes, size, replace = FALSE))
+    }
+
+    hist(xbar, prob = TRUE, col = "#1f77b4", border = "black",
+         main ="",
+         xlim = c(0, 60),
+         ylim = c(0, .2))
+     
+    text(40, 0.18, paste("Sample Size =", size))
+    text(40, 0.14, paste("Mean =", round(mean(xbar), 2)))
+    text(40, 0.10, paste("SD =", round(sd(xbar), 2)))
+    
+}
+```
+
+```{r, message = FALSE, echo = FALSE, comment = "", results='hold'}
+par(mfrow = c(1,1))
+```
+
+# Sampling Methods {.tabset}
+
+In statistics, there are several sampling methods used for data analysis. In this part of our analysis, we'll examine different sampling techniques and how they represent the Blue Bikes district data. For the purposes of this analysis, we will exclude the district of Everett, as it was introduced only in Spring 2019 and has a very low proportion in the dataset. The sampling methods we will use include *Simple Random Sampling With Replacement*, *Stratified Random Sampling*, and *Systematic Sampling*.
+
+Findings: After collecting samples using these methods, we found that Stratified Random Sampling provided the closest representation of the actual distribution of total bike rides by district. With Stratified Random Sampling, each subgroup/strata (the districts) of the population is ensured to be represented in the sample and this can lead to a more accurate depiction of the population. In addition to finding the best sampling method for our population, we also found the worst. Systematical Sampling may have introduced a sampling error- we can see that Cambridge has a significantly higher proportion when compared to the population distribution. It is known that if there are hidden patterns in the population data, there is also a higher chance of sampling errors with this method. In conclusion, if Stratified Random Sampling was used instead of the whole dataset, I believe that it would provide an accurate representation of our population data. I would not, however, reccomend using Systematical Sampling due to the patterns we have found in our analysis. 
+
+```{r, message = FALSE, echo = FALSE, comment = "", results='hold'}
+# Population
+bluebikesdata <- bluebikes %>%
+  filter(!is.na(start_district)) %>%
+  filter(start_district != "Everett")
+t_pop <- table(bluebikesdata$start_district)
+t_pop_prop <- prop.table(table(bluebikesdata$start_district))*100
+
+set.seed(500)
+# Simple Random Sampling With Replacement
+s_srswr <- srswor(40, nrow(bluebikesdata))
+rows_srswr <- (1:nrow(bluebikesdata))[s_srswr!=0]
+rows_srswr <- rep(rows_srswr, s_srswr[s_srswr!=0])
+sample_srswr <- bluebikesdata[rows_srswr,]
+t_srswr <- table(sample_srswr$start_district)
+t_srswr_prop <- prop.table(table(sample_srswr$start_district))*100
+
+set.seed(500)
+# Stratified Random Sampling
+order.index <- order(bluebikesdata$start_district)
+srsdata <- bluebikesdata[order.index, ]
+freq_srs <- table(srsdata$start_district)
+sizes <- round(40 * freq_srs/sum(freq_srs))
+st <- sampling::strata(srsdata, stratanames = c("start_district"),
+                       size = sizes, method = "srswor")
+sample_srs <- sampling::getdata(srsdata, st)
+t_srs <- table(sample_srs$start_district)
+t_srs_prop <- prop.table(table(sample_srs$start_district))*100
+
+set.seed(500)
+# Systematic Sampling
+N_ssup <- nrow(bluebikesdata)
+n_ssup <- 40
+k <- ceiling(N_ssup/n_ssup)
+r <- sample(k, 1)
+s_ssup <- seq(r, by = k, length = n_ssup)
+sample_ssup <- bluebikesdata[s_ssup, ]
+t_ss <- table(sample_ssup$start_district)
+t_ss_prop <- prop.table(table(sample_ssup$start_district))*100
+```
+
+
+```{r, message = FALSE, echo = FALSE, comment = "", warning = FALSE}
+t_pop_df <- as.data.frame(t_pop_prop)
+names(t_pop_df) <- c("District", "Proportion")  
+
+t_srswr_df <- as.data.frame(t_srswr_prop)
+names(t_srswr_df) <- c("District", "Proportion")
+
+t_srs_df <- as.data.frame(t_srs_prop)
+names(t_srs_df) <- c("District", "Proportion")
+
+t_ss_df <- as.data.frame(t_ss_prop)
+names(t_ss_df) <- c("District", "Proportion")
+
+t_pop_plot <- plot_ly(data = t_pop_df, x = ~District, y = ~Proportion, type = "bar", name = "Population",
+                      marker = list(color = 'rgb(158,202,225)',
+                                    line = list(color = 'rgb(8,48,107)'))) %>%
+                    layout(width = 800) 
+
+t_srs_plot <- plot_ly(data = t_srs_df, x = ~District, y = ~Proportion, type = "bar", name = "Stratified Random Sampling",
+                      marker = list(color = 'rgba(255, 255, 0, 0.5)',
+                                    line = list(color = 'rgb(139, 69, 19)'))) %>%
+                    layout(width = 800) 
+
+t_ss_plot <- plot_ly(data = t_ss_df, x = ~District, y = ~Proportion, type = "bar", name = "Systematic Sampling",
+                     marker = list(color = 'rgba(0, 255, 0, 0.5)',
+                                   line = list(color = 'rgba(0, 200, 0, 0.5)'))) %>%
+                    layout(width = 800)  
+
+t_srswr_plot <- plot_ly(data = t_srswr_df, x = ~District, y = ~Proportion, type = "bar", name = "SRS With Replacement",
+                     marker = list(color = 'rgba(255, 0, 0, 0.5)',
+                                   line = list(color = 'rgba(139, 0, 0)'))) %>%
+                    layout(width = 800)  
+
+
+fig <- subplot(t_pop_plot, t_srs_plot, t_ss_plot, t_srswr_plot, nrows = 2)
+```
+
+
+```{r, message = FALSE, echo = FALSE, comment = "", warning = FALSE}
+combined_df <- merge(t_pop_df, t_srs_df, by = "District", suffixes = c("_population", "_srs"))
+combined_df <- merge(combined_df, t_ss_df, by = "District")
+combined_df <- merge(combined_df, t_srswr_df, by = "District")
+
+colnames(combined_df)[grep("Proportion", colnames(combined_df))] <- c("Population_Proportion", "SRS_Proportion", "SS_Proportion", "SRSWR_Proportion")
+
+kable(combined_df, format = "markdown")
+
+fig
+```
+
+
+***
+
+Take a closer look at each sampling method by selecting one of the tabs below
+
+***
+
+## Population
+
+Firstly, lets take a look at the distribution of Bike Share Rides in our population data (omitting Everett). We see that there the order from highest proportion to lowest is as follows: Boston, Cambridge, Somerville and lastly Brookline.
+
+```{r, message = FALSE, echo = FALSE, comment = "", results='hold'}
+t_pop <- as.data.frame(t_pop)
+names(t_pop) <- c("District", "Count")
+
+t_pop_prop <- as.data.frame(t_pop_prop)
+names(t_pop_prop) <- c("District", "Proportion")
+
+combined_pop <- merge(t_pop, t_pop_prop, by = "District")
+
+kable(combined_pop, format = "markdown")
+t_pop_plot
+```
+
+## Stratified Random Sampling
+
+
+```{r, message = FALSE, echo = FALSE, comment = "", results='hold'}
+t_srs <- as.data.frame(t_srs)
+names(t_srs) <- c("District", "Count")
+
+t_srs_prop <- as.data.frame(t_srs_prop)
+names(t_srs_prop) <- c("District", "Proportion")
+
+combined_t_srs <- merge(t_srs, t_srs_prop, by = "District")
+
+kable(combined_t_srs, format = "markdown")
+t_srs_plot
+```
+
+
+## Systematic Sampling
+
+
+```{r, message = FALSE, echo = FALSE, comment = "", results='hold'}
+t_ss <- as.data.frame(t_ss)
+names(t_ss) <- c("District", "Count")
+
+t_ss_prop <- as.data.frame(t_ss_prop)
+names(t_ss_prop) <- c("District", "Proportion")
+
+combined_t_ss <- merge(t_ss, t_ss_prop, by = "District")
+
+kable(combined_t_ss, format = "markdown")
+t_ss_plot
+```
+
+
+## Simple Random Sampling W/ Replacement
+
+
+```{r, message = FALSE, echo = FALSE, comment = "", results='hold'}
+t_srswr <- as.data.frame(t_srswr)
+names(t_srswr) <- c("District", "Count")
+
+t_srswr_prop <- as.data.frame(t_srswr_prop)
+names(t_srswr_prop) <- c("District", "Proportion")
+
+combined_t_srswr <- merge(t_srswr, t_srswr_prop, by = "District")
+
+kable(combined_t_srswr, format = "markdown")
+t_srswr_plot
+```
+
+# Map
+
+Bellow you will find a map with all the unique stations in the Blue Bikes dataset. I used the [leaflet](https://cran.r-project.org/web/packages/leaflet/index.html) package in R to help me generate this map. To learn more about leaflet, I looked at documentation found on [geeksforgeeks](https://www.geeksforgeeks.org/leaflet-package-in-r/). 
+
+```{r, message = FALSE, warning = FALSE}
+bluebikes_map_data <- bluebikes %>% # removing NA values from start_district
+  filter(!is.na(start_district)) 
+
+point <- unique(data.frame(lat = bluebikes_map_data$`start station latitude`, long = bluebikes_map_data$`start station longitude`))
+latitude <- point$lat
+longitude <- point$long
+
+blue_bike_station_map <- leaflet() %>%
+  addProviderTiles("CartoDB.Voyager") %>%
+  addMarkers(lat = 42.361145, lng = -71.057083, popup = "Blue Bike Stations") # Boston coordinates
+  
+for (i in 1:length(longitude)) {
+  blue_bike_station_map <- addMarkers(map = blue_bike_station_map, lng = longitude[i], lat = latitude[i])
+}
+
+blue_bike_station_map
+```
+
+# Conclusion
+
+This analysis primarily focuses on Blue Bike trip duration, district data, and bike rentals throughout the year. We found that the total daily bike rides throughout the year follow a similar pattern regardless of the district at the start of the trip, with lower volumes in colder Boston months and higher volumes in the warmer months. Although Everett had the lowest daily trip rides (most likely due to its introduction in Spring 2019), it had the highest average trip duration. It is interesting to see the stark differences in distributions of user types. Customers/non-subscribing members typically have longer trips compared to subscribers; however, they make up much less of the data than subscribers. 
+
+We found that our observation of the Central Limit Theorem aligns with what we expected to happen based on our understanding of the theorem: as the sample size increased, the standard deviation decreased, and the distribution became narrower. Additionally, Stratified Random Sampling provided the closest representation of the Blue Bikes data we were working with.
+
+Some problems I encountered with this data were NA values. Some column information, for example, gender, was based on user input data, so it may not have been an accurate representation of Blue Bike usage. 
+
+
+
+
+
+
+
+
+
+
+
